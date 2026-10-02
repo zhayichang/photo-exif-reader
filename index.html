@@ -67,11 +67,38 @@
           <button class="secondary-button" id="choose-another" type="button">选择另一张</button>
         </div>
 
+        <section class="section-block" aria-labelledby="fingerprint-title">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">视觉与数据结构</p>
+              <h2 id="fingerprint-title">照片数字指纹</h2>
+            </div>
+            <p class="section-stat">由画面像素与元数据共同生成</p>
+          </div>
+          <div class="fingerprint-grid">
+            <article class="insight-card pixel-card">
+              <div class="insight-heading"><span>RGB 直方图</span><small>HISTOGRAM</small></div>
+              <canvas id="histogram-canvas" aria-label="RGB 像素直方图"></canvas>
+              <p class="analysis-status" id="histogram-status">正在分析画面…</p>
+            </article>
+            <article class="insight-card pixel-card">
+              <div class="insight-heading"><span>主色与色板</span><small>PALETTE</small></div>
+              <div class="palette" id="palette"></div>
+              <p class="analysis-status" id="palette-status">正在提取颜色…</p>
+            </article>
+            <article class="insight-card span-2" id="module-structure">
+              <div class="insight-heading"><span>元数据结构</span><small>TAG COMPOSITION</small></div>
+              <div class="structure-bar" id="structure-bar"></div>
+              <div class="structure-legend" id="structure-legend"></div>
+            </article>
+          </div>
+        </section>
+
         <section class="section-block" aria-labelledby="core-title">
           <div class="section-heading">
             <div>
               <p class="eyebrow">拍摄概览</p>
-              <h2 id="core-title">核心信息</h2>
+              <h2 id="core-title">核心摄影信息</h2>
             </div>
             <p id="tag-total" class="section-stat"></p>
           </div>
@@ -85,7 +112,7 @@
                 <div><dt>图像尺寸</dt><dd id="image-size">—</dd></div>
               </dl>
             </article>
-            <div class="exposure-grid" aria-label="曝光三要素">
+            <div class="exposure-grid" aria-label="曝光参数">
               <article class="exposure-card aperture">
                 <span>光圈</span><strong id="aperture">—</strong><small>APERTURE</small>
               </article>
@@ -95,11 +122,43 @@
               <article class="exposure-card iso">
                 <span>感光度</span><strong id="iso">—</strong><small>ISO</small>
               </article>
+              <article class="exposure-card compensation">
+                <span>曝光补偿</span><strong id="exposure-compensation">—</strong><small>EV</small>
+              </article>
             </div>
+          </div>
+          <div class="core-detail-grid">
+            <article class="insight-card" id="module-focal" hidden>
+              <div class="insight-heading"><span>焦段与视角</span><small>FOCAL LENGTH</small></div>
+              <strong class="insight-value" id="focal-value"></strong>
+              <div class="scale-track focal-scale"><span id="focal-marker"></span></div>
+              <div class="scale-labels"><span>超广角</span><span>标准</span><span>长焦</span></div>
+              <p class="insight-note" id="focal-note"></p>
+            </article>
+            <article class="insight-card" id="module-white-balance" hidden>
+              <div class="insight-heading"><span>白平衡与色彩</span><small>WHITE BALANCE</small></div>
+              <strong class="insight-value" id="temperature-value"></strong>
+              <div class="temperature-track"><span id="temperature-marker"></span></div>
+              <div class="fact-list compact" id="white-balance-list"></div>
+            </article>
+            <article class="insight-card" id="module-image-spec">
+              <div class="insight-heading"><span>图像规格</span><small>IMAGE</small></div>
+              <div class="format-visual" id="format-visual"><span id="format-ratio"></span></div>
+              <div class="fact-list compact" id="image-spec-list"></div>
+            </article>
           </div>
         </section>
 
         <section class="dashboard-grid">
+          <article class="panel" aria-labelledby="summary-title">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">快速了解</p>
+                <h2 id="summary-title">信息摘要</h2>
+              </div>
+            </div>
+            <div id="summary-list" class="summary-list"></div>
+          </article>
           <article class="panel" aria-labelledby="privacy-title">
             <div class="panel-heading">
               <div>
@@ -110,16 +169,93 @@
             </div>
             <div id="privacy-list" class="privacy-list"></div>
           </article>
+        </section>
 
-          <article class="panel" aria-labelledby="groups-title">
-            <div class="panel-heading">
-              <div>
-                <p class="eyebrow">信息构成</p>
-                <h2 id="groups-title">元数据分布</h2>
-              </div>
+        <section class="section-block" aria-labelledby="editing-title">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">后期处理</p>
+              <h2 id="editing-title">编辑解读</h2>
             </div>
-            <div id="group-chart" class="group-chart"></div>
-          </article>
+            <p class="section-stat">仅在文件包含相关记录时显示</p>
+          </div>
+          <div class="insight-grid">
+            <article class="insight-card span-2" id="module-editing" hidden>
+              <div class="insight-heading"><span>Lightroom 调整参数</span><small>XMP DEVELOP</small></div>
+              <div class="adjustment-grid" id="adjustment-grid"></div>
+            </article>
+            <article class="insight-card" id="module-crop" hidden>
+              <div class="insight-heading"><span>裁切与几何</span><small>GEOMETRY</small></div>
+              <div class="crop-stage"><div class="crop-frame" id="crop-frame"></div></div>
+              <div class="fact-list compact" id="crop-list"></div>
+            </article>
+            <article class="insight-card" id="module-color-profile" hidden>
+              <div class="insight-heading"><span>色彩配置</span><small>COLOR PROFILE</small></div>
+              <div class="color-orbit" aria-hidden="true"><i></i><i></i><i></i></div>
+              <div class="fact-list compact" id="color-profile-list"></div>
+            </article>
+            <article class="insight-card span-2" id="module-color-edit" hidden>
+              <div class="insight-heading"><span>曲线与颜色调整</span><small>TONE &amp; HSL</small></div>
+              <div class="tone-layout">
+                <svg class="tone-curve" id="tone-curve" viewBox="0 0 256 160" role="img" aria-label="色调曲线"></svg>
+                <div class="hsl-bars" id="hsl-bars"></div>
+              </div>
+            </article>
+            <article class="insight-card span-2" id="module-timeline" hidden>
+              <div class="insight-heading"><span>时间与编辑链路</span><small>TIMELINE</small></div>
+              <div class="timeline" id="timeline"></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="section-block" aria-labelledby="archive-title">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">扩展记录</p>
+              <h2 id="archive-title">文件档案</h2>
+            </div>
+            <p class="section-stat">设备、位置、管理与一致性信息</p>
+          </div>
+          <div class="insight-grid">
+            <article class="insight-card span-2" id="module-shooting" hidden>
+              <div class="insight-heading"><span>拍摄模式与辅助信息</span><small>CAPTURE MODES</small></div>
+              <div class="fact-grid" id="shooting-grid"></div>
+            </article>
+            <article class="insight-card" id="module-location" hidden>
+              <div class="insight-heading"><span>位置与方向</span><small>LOCATION</small></div>
+              <div class="location-layout">
+                <div class="compass" aria-hidden="true"><span id="compass-arrow">↑</span></div>
+                <div class="fact-list compact" id="location-list"></div>
+              </div>
+            </article>
+            <article class="insight-card" id="module-catalog" hidden>
+              <div class="insight-heading"><span>评分与管理</span><small>CATALOG</small></div>
+              <div class="rating" id="rating"></div>
+              <div class="keyword-list" id="keyword-list"></div>
+              <div class="fact-list compact" id="catalog-list"></div>
+            </article>
+            <article class="insight-card" id="module-rights" hidden>
+              <div class="insight-heading"><span>作者与版权</span><small>RIGHTS</small></div>
+              <div class="fact-list" id="rights-list"></div>
+            </article>
+            <article class="insight-card" id="module-equipment" hidden>
+              <div class="insight-heading"><span>设备档案</span><small>EQUIPMENT</small></div>
+              <div class="fact-list" id="equipment-list"></div>
+            </article>
+            <article class="insight-card" id="module-thumbnail" hidden>
+              <div class="insight-heading"><span>内置缩略图</span><small>IFD1 PREVIEW</small></div>
+              <div class="embedded-preview"><img id="embedded-thumbnail" alt="照片内置缩略图" /></div>
+              <p class="insight-note">由文件内部预览数据生成，可能与成品图存在差异。</p>
+            </article>
+            <article class="insight-card" id="module-completeness">
+              <div class="insight-heading"><span>元数据完整度</span><small>COVERAGE</small></div>
+              <div class="coverage-grid" id="coverage-grid"></div>
+            </article>
+            <article class="insight-card" id="module-conflicts" hidden>
+              <div class="insight-heading"><span>字段冲突</span><small>CONSISTENCY</small></div>
+              <div class="conflict-list" id="conflict-list"></div>
+            </article>
+          </div>
         </section>
 
         <section class="section-block details-section" aria-labelledby="details-title">
