@@ -21,7 +21,12 @@
   <body>
     <header class="site-header">
       <a class="brand" href="./" aria-label="EXIF 信息读取工具首页">
-        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24">
+            <path d="M9 4H6a2 2 0 0 0-2 2v3m11-5h3a2 2 0 0 1 2 2v3M9 20H6a2 2 0 0 1-2-2v-3m11 5h3a2 2 0 0 0 2-2v-3" />
+            <rect x="10" y="10" width="4" height="4" rx="1" />
+          </svg>
+        </span>
         <span>EXIF 信息读取工具</span>
       </a>
     </header>
@@ -186,7 +191,10 @@
             </article>
             <article class="insight-card" id="module-crop" hidden>
               <div class="insight-heading"><span>裁切与几何</span><small>GEOMETRY</small></div>
-              <div class="crop-stage"><div class="crop-frame" id="crop-frame"></div></div>
+              <div class="crop-stage">
+                <span class="crop-stage-label">原尺寸</span>
+                <div class="crop-frame" id="crop-frame"></div>
+              </div>
               <div class="fact-list compact" id="crop-list"></div>
             </article>
             <article class="insight-card" id="module-color-profile" hidden>
