@@ -265,6 +265,18 @@
               <h2 id="details-title">全部元数据</h2>
             </div>
             <div class="table-tools">
+              <button
+                class="details-toggle"
+                id="metadata-toggle"
+                type="button"
+                aria-expanded="true"
+                aria-controls="metadata-content"
+              >
+                <span>折叠</span>
+                <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18">
+                  <path d="m7 10 5 5 5-5"></path>
+                </svg>
+              </button>
               <label class="search-field">
                 <span class="sr-only">搜索标签或数值</span>
                 <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18">
@@ -278,7 +290,7 @@
               </label>
             </div>
           </div>
-          <div class="table-wrap">
+          <div class="table-wrap" id="metadata-content">
             <table>
               <thead><tr><th>分组</th><th>标签</th><th>值</th></tr></thead>
               <tbody id="metadata-body"></tbody>

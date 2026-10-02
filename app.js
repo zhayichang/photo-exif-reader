@@ -22,6 +22,8 @@ const elements = {
   summaryList: document.querySelector("#summary-list"),
   search: document.querySelector("#search"),
   groupFilter: document.querySelector("#group-filter"),
+  metadataToggle: document.querySelector("#metadata-toggle"),
+  metadataContent: document.querySelector("#metadata-content"),
   metadataBody: document.querySelector("#metadata-body"),
   emptyFilter: document.querySelector("#empty-filter"),
   engine: document.querySelector("#engine"),
@@ -87,6 +89,14 @@ elements.fileInput.addEventListener("change", () => {
 elements.chooseAnother.addEventListener("click", () => elements.fileInput.click());
 elements.search.addEventListener("input", renderRows);
 elements.groupFilter.addEventListener("change", renderRows);
+elements.metadataToggle.addEventListener("click", () => {
+  const expanded = elements.metadataToggle.getAttribute("aria-expanded") === "true";
+  elements.metadataToggle.setAttribute("aria-expanded", String(!expanded));
+  elements.metadataToggle.querySelector("span").textContent = expanded ? "展开" : "折叠";
+  elements.metadataContent.hidden = expanded;
+  elements.search.closest(".search-field").hidden = expanded;
+  elements.groupFilter.closest(".group-select").hidden = expanded;
+});
 
 for (const eventName of ["dragenter", "dragover"]) {
   elements.dropZone.addEventListener(eventName, (event) => {
@@ -160,7 +170,7 @@ function renderResult(result, file) {
       const group = separator > 0 ? key.slice(0, separator) : "解析信息";
       const tag = separator > 0 ? key.slice(separator + 1) : key;
       const displayValue = formatValue(value);
-      return { group, tag, displayValue, searchable: `${group} ${tag} ${displayValue}`.toLowerCase() };
+      return { group, tag, displayValue, sensitive: /SerialNumber$/i.test(tag), searchable: `${group} ${tag} ${displayValue}`.toLowerCase() };
     })
     .sort((a, b) => a.group.localeCompare(b.group) || a.tag.localeCompare(b.tag));
 
@@ -466,7 +476,10 @@ function renderEquipment(tags) {
   ]);
   for (const [label, names] of [["机身序列号", ["BodySerialNumber", "SerialNumber", "InternalSerialNumber"]], ["镜头序列号", ["LensSerialNumber"]]]) {
     const value = findRawTag(tags, names);
-    if (value !== undefined) facts.push([label, maskIdentifier(formatValue(value))]);
+    if (value !== undefined) {
+      const displayValue = formatValue(value);
+      facts.push([label, maskIdentifier(displayValue), displayValue]);
+    }
   }
   setModule(elements.equipment, facts.length > 0);
   renderFactList(elements.equipmentList, facts);
@@ -633,7 +646,12 @@ function renderPrivacy(tags) {
   }
 
   if (serials.length) {
-    findings.push({ level: "warn", title: "包含设备序列号", detail: summarizeMatches(serials) });
+    findings.push({
+      level: "warn",
+      title: "包含设备序列号",
+      detail: summarizeMatches(serials.map((item) => ({ ...item, value: maskIdentifier(item.value) }))),
+      sensitiveValue: summarizeMatches(serials),
+    });
   } else {
     findings.push({ level: "ok", title: "未发现设备序列号", detail: "没有检测到机身或镜头序列号。" });
   }
@@ -663,7 +681,15 @@ function renderPrivacy(tags) {
     title.textContent = item.title;
     const detail = document.createElement("p");
     detail.textContent = item.detail;
-    content.append(title, detail);
+    content.append(title);
+    if (item.sensitiveValue) {
+      const value = document.createElement("div");
+      value.className = "visibility-value";
+      value.append(detail, makeVisibilityToggle(detail, item.detail, item.sensitiveValue, "设备序列号"));
+      content.append(value);
+    } else {
+      content.append(detail);
+    }
     container.append(marker, content);
     return container;
   }));
@@ -720,7 +746,15 @@ function renderRows() {
     const tr = document.createElement("tr");
     for (const [index, value] of [row.group, row.tag, row.displayValue].entries()) {
       const td = document.createElement("td");
-      if (index === 2 && value.length > 320) {
+      if (index === 2 && row.sensitive) {
+        const content = document.createElement("div");
+        content.className = "visibility-value";
+        const text = document.createElement("span");
+        const maskedValue = maskIdentifier(value);
+        text.textContent = maskedValue;
+        content.append(text, makeVisibilityToggle(text, maskedValue, value, row.tag));
+        td.append(content);
+      } else if (index === 2 && value.length > 320) {
         const details = document.createElement("details");
         details.className = "structured-value";
         const summary = document.createElement("summary");
@@ -769,13 +803,38 @@ function makeFact(label, value) {
 
 function renderFactList(container, facts) {
   const list = document.createElement("dl"); list.className = container.className;
-  list.replaceChildren(...facts.map(([label, value]) => {
+  list.replaceChildren(...facts.map(([label, value, sensitiveValue]) => {
     const row = document.createElement("div");
     const term = document.createElement("dt"); term.textContent = label;
-    const detail = document.createElement("dd"); detail.textContent = value;
+    const detail = document.createElement("dd");
+    if (sensitiveValue) {
+      detail.className = "visibility-value";
+      const text = document.createElement("span"); text.textContent = value;
+      detail.append(text, makeVisibilityToggle(text, value, sensitiveValue, label));
+    } else {
+      detail.textContent = value;
+    }
     row.append(term, detail); return row;
   }));
   container.replaceChildren(...list.children);
+}
+
+function makeVisibilityToggle(target, hiddenValue, shownValue, label) {
+  const button = document.createElement("button");
+  button.className = "visibility-toggle";
+  button.type = "button";
+  button.setAttribute("aria-pressed", "false");
+  button.setAttribute("aria-label", `显示${label}`);
+  button.innerHTML = `
+    <svg class="eye-open" aria-hidden="true" viewBox="0 0 24 24"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"></path><circle cx="12" cy="12" r="2.5"></circle></svg>
+    <svg class="eye-closed" aria-hidden="true" viewBox="0 0 24 24"><path d="m3 3 18 18"></path><path d="M10.6 6.2A10.8 10.8 0 0 1 12 6c6 0 9.5 6 9.5 6a15.3 15.3 0 0 1-2.1 2.8M6.2 6.2C3.8 7.8 2.5 12 2.5 12s3.5 6 9.5 6a9.8 9.8 0 0 0 3.1-.5"></path></svg>`;
+  button.addEventListener("click", () => {
+    const shown = button.getAttribute("aria-pressed") === "true";
+    target.textContent = shown ? hiddenValue : shownValue;
+    button.setAttribute("aria-pressed", String(!shown));
+    button.setAttribute("aria-label", `${shown ? "显示" : "隐藏"}${label}`);
+  });
+  return button;
 }
 
 function makeAdjustment(label, value, minimum, maximum) {
