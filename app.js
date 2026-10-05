@@ -48,6 +48,12 @@ const elements = {
   colorProfileList: document.querySelector("#color-profile-list"),
   editing: document.querySelector("#module-editing"),
   adjustmentGrid: document.querySelector("#adjustment-grid"),
+  xmpExport: document.querySelector("#module-xmp-export"),
+  xmpExportTitle: document.querySelector("#xmp-export-title"),
+  xmpExportSummary: document.querySelector("#xmp-export-summary"),
+  xmpExportWarning: document.querySelector("#xmp-export-warning"),
+  xmpRawName: document.querySelector("#xmp-raw-name"),
+  xmpDownload: document.querySelector("#xmp-download"),
   crop: document.querySelector("#module-crop"),
   cropFrame: document.querySelector("#crop-frame"),
   cropList: document.querySelector("#crop-list"),
@@ -80,6 +86,8 @@ const elements = {
 let metadataRows = [];
 let previewUrl;
 let thumbnailUrl;
+let xmpExportState;
+const xmpTechnicalProperties = new Set(["AlreadyApplied", "HasSettings", "ProcessVersion", "RawFileName", "Version"]);
 
 elements.fileInput.addEventListener("change", () => {
   const [file] = elements.fileInput.files;
@@ -87,6 +95,8 @@ elements.fileInput.addEventListener("change", () => {
 });
 
 elements.chooseAnother.addEventListener("click", () => elements.fileInput.click());
+elements.xmpRawName.addEventListener("input", updateXmpDownloadState);
+elements.xmpDownload.addEventListener("click", downloadLightroomXmp);
 elements.search.addEventListener("input", renderRows);
 elements.groupFilter.addEventListener("change", renderRows);
 elements.metadataToggle.addEventListener("click", () => {
@@ -221,6 +231,7 @@ function renderExtendedInsights(tags, file, width, height) {
   renderImageSpecs(tags, file, width, height);
   renderColorProfile(tags);
   renderDevelopAdjustments(tags);
+  renderXmpExport(tags);
   renderCrop(tags);
   renderToneAndColor(tags);
   renderTimeline(tags);
@@ -364,6 +375,104 @@ function renderDevelopAdjustments(tags) {
   }).filter(Boolean);
   setModule(elements.editing, rows.length > 0);
   elements.adjustmentGrid.replaceChildren(...rows);
+}
+
+function renderXmpExport(tags) {
+  const entries = Object.entries(tags)
+    .filter(([key]) => key.startsWith("XMP-crs:"))
+    .map(([key, value]) => [key.slice("XMP-crs:".length), value]);
+  const serializable = entries.filter(([name, value]) => isXmpPropertyName(name) && isSerializableXmpValue(value));
+  const skipped = entries.length - serializable.length;
+  const adjustmentCount = serializable.filter(([name]) => !xmpTechnicalProperties.has(name)).length;
+
+  setModule(elements.xmpExport, adjustmentCount > 0);
+  if (adjustmentCount === 0) {
+    xmpExportState = undefined;
+    elements.xmpRawName.value = "";
+    updateXmpDownloadState();
+    return;
+  }
+
+  const rawFileName = serializable.find(([name]) => name === "RawFileName")?.[1];
+  xmpExportState = { entries: serializable, skipped };
+  elements.xmpRawName.value = typeof rawFileName === "string" ? rawFileName : "";
+  elements.xmpExportTitle.textContent = skipped === 0 ? "检测到可重建的 Lightroom 调整" : "检测到可部分重建的 Lightroom 调整";
+  elements.xmpExportSummary.textContent = `${adjustmentCount} 个调整字段可以写入 XMP${skipped ? `，${skipped} 个复杂字段不会导出` : ""}。`;
+  elements.xmpExportWarning.textContent = "导出的 sidecar 仅恢复成片中仍保留的调整；复杂蒙版、AI 编辑和 Lightroom 目录历史可能无法恢复。";
+  updateXmpDownloadState();
+}
+
+function updateXmpDownloadState() {
+  elements.xmpDownload.disabled = !xmpExportState || !getRawFileName(elements.xmpRawName.value);
+}
+
+function downloadLightroomXmp() {
+  if (!xmpExportState) return;
+  const rawFileName = getRawFileName(elements.xmpRawName.value);
+  if (!rawFileName) {
+    setStatus("请先填写 RAW 的原始文件名，例如 IMG_1234.CR3。", true);
+    return;
+  }
+
+  const xmp = buildLightroomXmp(xmpExportState.entries, rawFileName);
+  const sidecarName = `${rawFileName.replace(/\.[^.]+$/, "")}.xmp`;
+  const url = URL.createObjectURL(new Blob([xmp], { type: "application/rdf+xml;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = sidecarName;
+  link.click();
+  URL.revokeObjectURL(url);
+  setStatus(`已生成 ${sidecarName}。请将它与 ${rawFileName} 放在同一文件夹，再让 Lightroom 从文件读取元数据。`);
+}
+
+function buildLightroomXmp(entries, rawFileName) {
+  const properties = new Map(entries);
+  properties.set("RawFileName", rawFileName);
+  properties.set("HasSettings", true);
+  properties.set("AlreadyApplied", false);
+
+  const attributes = [];
+  const childProperties = [];
+  for (const [name, value] of properties) {
+    if (!isXmpPropertyName(name) || !isSerializableXmpValue(value)) continue;
+    if (Array.isArray(value)) {
+      const items = value.map((item) => `          <rdf:li>${escapeXml(formatXmpValue(item))}</rdf:li>`).join("\n");
+      childProperties.push(`        <crs:${name}>\n          <rdf:Seq>\n${items}\n          </rdf:Seq>\n        </crs:${name}>`);
+    } else {
+      attributes.push(`      crs:${name}="${escapeXml(formatXmpValue(value))}"`);
+    }
+  }
+
+  const openingDescription = attributes.length
+    ? `    <rdf:Description rdf:about=""\n      xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"\n${attributes.join("\n")}>`
+    : `    <rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/">`;
+  const children = childProperties.length ? `\n${childProperties.join("\n")}\n    ` : "";
+
+  return `<?xpacket begin="\uFEFF" id="W5M0MpCehiHzreSzNTczkc9d"?>\n<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Photo EXIF Reader">\n  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">\n${openingDescription}${children}</rdf:Description>\n  </rdf:RDF>\n</x:xmpmeta>\n<?xpacket end="w"?>\n`;
+}
+
+function isXmpPropertyName(name) {
+  return /^[A-Za-z_][A-Za-z0-9._-]*$/.test(name);
+}
+
+function isSerializableXmpValue(value) {
+  if (typeof value === "string" || typeof value === "boolean") return true;
+  if (typeof value === "number") return Number.isFinite(value);
+  return Array.isArray(value) && value.every((item) => typeof item === "string" || typeof item === "boolean" || (typeof item === "number" && Number.isFinite(item)));
+}
+
+function formatXmpValue(value) {
+  if (typeof value === "boolean") return value ? "True" : "False";
+  return String(value);
+}
+
+function escapeXml(value) {
+  return String(value).replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
+function getRawFileName(value) {
+  const fileName = value.trim().split(/[\\/]/).pop();
+  return fileName && fileName.replace(/\.[^.]+$/, "") ? fileName : "";
 }
 
 function renderCrop(tags) {

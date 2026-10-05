@@ -189,6 +189,23 @@
               <div class="insight-heading"><span>Lightroom 调整参数</span><small>XMP DEVELOP</small></div>
               <div class="adjustment-grid" id="adjustment-grid"></div>
             </article>
+            <article class="insight-card span-2" id="module-xmp-export" hidden>
+              <div class="insight-heading"><span>恢复 Lightroom 调整</span><small>XMP SIDECAR</small></div>
+              <div class="xmp-export-layout">
+                <div>
+                  <strong class="xmp-export-title" id="xmp-export-title"></strong>
+                  <p class="insight-note" id="xmp-export-summary"></p>
+                </div>
+                <div class="xmp-export-controls">
+                  <label class="xmp-name-field">
+                    <span>RAW 原文件名</span>
+                    <input id="xmp-raw-name" type="text" placeholder="例如 IMG_1234.CR3" autocomplete="off" spellcheck="false" />
+                  </label>
+                  <button class="secondary-button" id="xmp-download" type="button" disabled>导出 XMP</button>
+                </div>
+              </div>
+              <p class="xmp-export-warning" id="xmp-export-warning"></p>
+            </article>
             <article class="insight-card" id="module-crop" hidden>
               <div class="insight-heading"><span>裁切与几何</span><small>GEOMETRY</small></div>
               <div class="crop-stage">
