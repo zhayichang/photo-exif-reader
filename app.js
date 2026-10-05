@@ -88,6 +88,8 @@ let previewUrl;
 let thumbnailUrl;
 let xmpExportState;
 const xmpTechnicalProperties = new Set(["AlreadyApplied", "HasSettings", "ProcessVersion", "RawFileName", "Version"]);
+const cameraRawNamespace = "http://ns.adobe.com/camera-raw-settings/1.0/";
+const rdfNamespace = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
 
 elements.fileInput.addEventListener("change", () => {
   const [file] = elements.fileInput.files;
@@ -154,13 +156,32 @@ async function readFile(file) {
     } catch (error) {
       metadataWarning = error.message || "元数据解析失败";
     }
+    let xmpExport = {};
+    if (parsed.crs && Object.keys(parsed.crs).length) {
+      if (!/\.jpe?g$/i.test(file.name)) {
+        xmpExport.reason = "当前仅支持从 JPEG 的原始 XMP 导出调整。";
+      } else {
+        try {
+          const sourceXmp = await readJpegXmp(file);
+          if (!sourceXmp) throw new Error("未找到可读取的原始 Camera Raw XMP。");
+          if (!Object.keys(parsed.crs).every((name) => sourceXmp.properties.has(name))) {
+            throw new Error("原始 XMP 缺少部分 Camera Raw 字段。");
+          }
+          const rawFileName = typeof parsed.crs.RawFileName === "string" ? getRawFileName(parsed.crs.RawFileName) : "";
+          await verifyExportedXmpData(sourceXmp, parsed.crs, rawFileName || "validation.CR3");
+          xmpExport = { sourceXmp, originalCrs: parsed.crs };
+        } catch (error) {
+          xmpExport.reason = error.message || "XMP 完整性检查失败。";
+        }
+      }
+    }
     const dimensions = await getImageDimensions(file);
     const result = {
       file: { name: file.name, size: file.size, type: file.type },
       tags: flattenMetadata(parsed, file, dimensions),
       engine: "由 exifr 7.1.3 提供元数据解析",
     };
-    renderResult(result, file);
+    renderResult(result, file, xmpExport);
     await Promise.allSettled([renderPixelAnalysis(file), renderEmbeddedThumbnail(file)]);
     setStatus(metadataWarning ? `未能完整读取元数据：${metadataWarning}。文件信息和画面分析仍可使用。` : "", Boolean(metadataWarning));
   } catch (error) {
@@ -171,7 +192,7 @@ async function readFile(file) {
   }
 }
 
-function renderResult(result, file) {
+function renderResult(result, file, xmpExport) {
   const tags = result.tags;
   metadataRows = Object.entries(tags)
     .filter(([, value]) => value !== undefined && value !== null && value !== "")
@@ -208,7 +229,7 @@ function renderResult(result, file) {
   renderSummary(tags);
   renderGroupOptions();
   renderRows();
-  renderExtendedInsights(tags, file, width, height);
+  renderExtendedInsights(tags, file, width, height, xmpExport);
 
   elements.results.hidden = false;
   elements.results.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -223,7 +244,7 @@ function renderPreview(file) {
   elements.preview.src = previewUrl;
 }
 
-function renderExtendedInsights(tags, file, width, height) {
+function renderExtendedInsights(tags, file, width, height, xmpExport) {
   renderShooting(tags);
   renderFocal(tags);
   renderWhiteBalance(tags);
@@ -231,7 +252,7 @@ function renderExtendedInsights(tags, file, width, height) {
   renderImageSpecs(tags, file, width, height);
   renderColorProfile(tags);
   renderDevelopAdjustments(tags);
-  renderXmpExport(tags);
+  renderXmpExport(tags, xmpExport);
   renderCrop(tags);
   renderToneAndColor(tags);
   renderTimeline(tags);
@@ -377,13 +398,11 @@ function renderDevelopAdjustments(tags) {
   elements.adjustmentGrid.replaceChildren(...rows);
 }
 
-function renderXmpExport(tags) {
+function renderXmpExport(tags, xmpExport) {
   const entries = Object.entries(tags)
     .filter(([key]) => key.startsWith("XMP-crs:"))
     .map(([key, value]) => [key.slice("XMP-crs:".length), value]);
-  const serializable = entries.filter(([name, value]) => isXmpPropertyName(name) && isSerializableXmpValue(value));
-  const skipped = entries.length - serializable.length;
-  const adjustmentCount = serializable.filter(([name]) => !xmpTechnicalProperties.has(name)).length;
+  const adjustmentCount = entries.filter(([name]) => !xmpTechnicalProperties.has(name)).length;
 
   setModule(elements.xmpExport, adjustmentCount > 0);
   if (adjustmentCount === 0) {
@@ -393,20 +412,60 @@ function renderXmpExport(tags) {
     return;
   }
 
-  const rawFileName = serializable.find(([name]) => name === "RawFileName")?.[1];
-  xmpExportState = { entries: serializable, skipped };
+  const rawFileName = tags["XMP-crs:RawFileName"];
+  xmpExportState = xmpExport.sourceXmp ? xmpExport : undefined;
   elements.xmpRawName.value = typeof rawFileName === "string" ? rawFileName : "";
-  elements.xmpExportTitle.textContent = skipped === 0 ? "检测到可重建的 Lightroom 调整" : "检测到可部分重建的 Lightroom 调整";
-  elements.xmpExportSummary.textContent = `${adjustmentCount} 个调整字段可以写入 XMP${skipped ? `，${skipped} 个复杂字段不会导出` : ""}。`;
-  elements.xmpExportWarning.textContent = "导出的 sidecar 仅恢复成片中仍保留的调整；复杂蒙版、AI 编辑和 Lightroom 目录历史可能无法恢复。";
+  const maskGroups = Array.isArray(tags["XMP-crs:MaskGroupBasedCorrections"])
+    ? tags["XMP-crs:MaskGroupBasedCorrections"].length : 0;
+  elements.xmpExportTitle.textContent = xmpExportState ? "检测到可导出的 Lightroom 调整" : "无法可靠导出 Lightroom 调整";
+  elements.xmpExportSummary.textContent = xmpExportState
+    ? `${adjustmentCount} 个调整字段可以写入 XMP${maskGroups ? `，包含 ${maskGroups} 组蒙版` : ""}。`
+    : `${maskGroups ? `检测到 ${maskGroups} 组蒙版，但` : ""}未能完整读取并核对原始 XMP，已禁用导出。`;
+  elements.xmpExportWarning.textContent = xmpExportState
+    ? "已核对导出内容；读取 sidecar 前请确认不会覆盖 Lightroom 中仍需保留的调整。"
+    : xmpExport.reason || "XMP 完整性检查失败。";
   updateXmpDownloadState();
+}
+
+async function readJpegXmp(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (bytes[0] !== 0xff || bytes[1] !== 0xd8) return null;
+  const view = new DataView(bytes.buffer);
+  const header = new TextEncoder().encode("http://ns.adobe.com/xap/1.0/\0");
+
+  for (let offset = 2; offset + 4 <= bytes.length;) {
+    if (bytes[offset] !== 0xff || bytes[offset + 1] === 0xda || bytes[offset + 1] === 0xd9) break;
+    if (bytes[offset + 1] === 0xff) { offset += 1; continue; }
+    const marker = bytes[offset + 1];
+    const length = view.getUint16(offset + 2);
+    const end = offset + 2 + length;
+    if (length < 2 || end > bytes.length) throw new Error("JPEG 的 XMP 所在片段不完整。");
+
+    if (marker === 0xe1 && header.every((byte, index) => bytes[offset + 4 + index] === byte)) {
+      const packet = new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(offset + 4 + header.length, end));
+      if (/<!DOCTYPE|<!ENTITY/i.test(packet)) throw new Error("XMP 包含不支持的实体声明。");
+      const xml = new DOMParser().parseFromString(packet, "application/xml");
+      if (xml.getElementsByTagName("parsererror").length) throw new Error("JPEG 内嵌的 XMP 不是有效的 XML。");
+      const rdf = xml.getElementsByTagNameNS(rdfNamespace, "RDF")[0];
+      if (!rdf) return null;
+      const descriptions = Array.from(rdf.children).filter((node) => node.namespaceURI === rdfNamespace && node.localName === "Description");
+      const properties = new Set();
+      for (const description of descriptions) {
+        for (const attribute of description.attributes) if (attribute.namespaceURI === cameraRawNamespace) properties.add(attribute.localName);
+        for (const child of description.children) if (child.namespaceURI === cameraRawNamespace) properties.add(child.localName);
+      }
+      return properties.size ? { descriptions, properties } : null;
+    }
+    offset = end;
+  }
+  return null;
 }
 
 function updateXmpDownloadState() {
   elements.xmpDownload.disabled = !xmpExportState || !getRawFileName(elements.xmpRawName.value);
 }
 
-function downloadLightroomXmp() {
+async function downloadLightroomXmp() {
   if (!xmpExportState) return;
   const rawFileName = getRawFileName(elements.xmpRawName.value);
   if (!rawFileName) {
@@ -414,7 +473,18 @@ function downloadLightroomXmp() {
     return;
   }
 
-  const xmp = buildLightroomXmp(xmpExportState.entries, rawFileName);
+  let xmp;
+  try {
+    xmp = await verifyExportedXmpData(xmpExportState.sourceXmp, xmpExportState.originalCrs, rawFileName);
+  } catch (error) {
+    xmpExportState = undefined;
+    updateXmpDownloadState();
+    elements.xmpExportTitle.textContent = "无法可靠导出 Lightroom 调整";
+    elements.xmpExportSummary.textContent = "导出内容未通过完整性检查，已禁用导出。";
+    elements.xmpExportWarning.textContent = error.message || "XMP 完整性检查失败。";
+    setStatus(elements.xmpExportWarning.textContent, true);
+    return;
+  }
   const sidecarName = `${rawFileName.replace(/\.[^.]+$/, "")}.xmp`;
   const url = URL.createObjectURL(new Blob([xmp], { type: "application/rdf+xml;charset=utf-8" }));
   const link = document.createElement("a");
@@ -425,49 +495,48 @@ function downloadLightroomXmp() {
   setStatus(`已生成 ${sidecarName}。请将它与 ${rawFileName} 放在同一文件夹，再让 Lightroom 从文件读取元数据。`);
 }
 
-function buildLightroomXmp(entries, rawFileName) {
-  const properties = new Map(entries);
-  properties.set("RawFileName", rawFileName);
-  properties.set("HasSettings", true);
-  properties.set("AlreadyApplied", false);
-
-  const attributes = [];
-  const childProperties = [];
-  for (const [name, value] of properties) {
-    if (!isXmpPropertyName(name) || !isSerializableXmpValue(value)) continue;
-    if (Array.isArray(value)) {
-      const items = value.map((item) => `          <rdf:li>${escapeXml(formatXmpValue(item))}</rdf:li>`).join("\n");
-      childProperties.push(`        <crs:${name}>\n          <rdf:Seq>\n${items}\n          </rdf:Seq>\n        </crs:${name}>`);
-    } else {
-      attributes.push(`      crs:${name}="${escapeXml(formatXmpValue(value))}"`);
+async function verifyExportedXmpData(sourceXmp, originalCrs, rawFileName) {
+  const xmp = buildLightroomXmpFromSource(sourceXmp, rawFileName);
+  const parsed = await window.exifr.sidecar(new Blob([xmp]), { xmp: true, tiff: false, mergeOutput: false }, "xmp");
+  const exportedCrs = parsed?.crs;
+  const expectedNames = new Set([...Object.keys(originalCrs), "RawFileName", "HasSettings", "AlreadyApplied"]);
+  if (!exportedCrs || Object.keys(exportedCrs).length !== expectedNames.size || Object.keys(exportedCrs).some((name) => !expectedNames.has(name))) {
+    throw new Error("导出的 XMP 缺少或多出了 Camera Raw 字段。");
+  }
+  for (const [name, value] of Object.entries(originalCrs)) {
+    if (["RawFileName", "HasSettings", "AlreadyApplied"].includes(name)) continue;
+    if (JSON.stringify(exportedCrs[name]) !== JSON.stringify(value)) {
+      throw new Error(`导出的 XMP 中 ${name} 与原始数据不一致。`);
     }
   }
-
-  const openingDescription = attributes.length
-    ? `    <rdf:Description rdf:about=""\n      xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"\n${attributes.join("\n")}>`
-    : `    <rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/">`;
-  const children = childProperties.length ? `\n${childProperties.join("\n")}\n    ` : "";
-
-  return `<?xpacket begin="\uFEFF" id="W5M0MpCehiHzreSzNTczkc9d"?>\n<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Photo EXIF Reader">\n  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">\n${openingDescription}${children}</rdf:Description>\n  </rdf:RDF>\n</x:xmpmeta>\n<?xpacket end="w"?>\n`;
+  if (exportedCrs.RawFileName !== rawFileName || exportedCrs.HasSettings !== true || exportedCrs.AlreadyApplied !== false) {
+    throw new Error("导出的 XMP 状态字段未通过检查。");
+  }
+  return xmp;
 }
 
-function isXmpPropertyName(name) {
-  return /^[A-Za-z_][A-Za-z0-9._-]*$/.test(name);
-}
+function buildLightroomXmpFromSource(sourceXmp, rawFileName) {
+  const xml = new DOMParser().parseFromString(
+    '<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"/></rdf:RDF></x:xmpmeta>',
+    "application/xml",
+  );
+  const target = xml.getElementsByTagNameNS(rdfNamespace, "Description")[0];
+  for (const description of sourceXmp.descriptions) {
+    for (const attribute of description.attributes) {
+      if (attribute.namespaceURI === cameraRawNamespace) target.setAttributeNS(cameraRawNamespace, attribute.name, attribute.value);
+    }
+    for (const child of description.children) {
+      if (child.namespaceURI === cameraRawNamespace) target.appendChild(xml.importNode(child, true));
+    }
+  }
+  for (const child of Array.from(target.children)) {
+    if (child.namespaceURI === cameraRawNamespace && ["RawFileName", "HasSettings", "AlreadyApplied"].includes(child.localName)) child.remove();
+  }
+  target.setAttributeNS(cameraRawNamespace, "crs:RawFileName", rawFileName);
+  target.setAttributeNS(cameraRawNamespace, "crs:HasSettings", "True");
+  target.setAttributeNS(cameraRawNamespace, "crs:AlreadyApplied", "False");
 
-function isSerializableXmpValue(value) {
-  if (typeof value === "string" || typeof value === "boolean") return true;
-  if (typeof value === "number") return Number.isFinite(value);
-  return Array.isArray(value) && value.every((item) => typeof item === "string" || typeof item === "boolean" || (typeof item === "number" && Number.isFinite(item)));
-}
-
-function formatXmpValue(value) {
-  if (typeof value === "boolean") return value ? "True" : "False";
-  return String(value);
-}
-
-function escapeXml(value) {
-  return String(value).replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  return `<?xpacket begin="\uFEFF" id="W5M0MpCehiHzreSzNTczkc9d"?>\n${new XMLSerializer().serializeToString(xml)}\n<?xpacket end="w"?>\n`;
 }
 
 function getRawFileName(value) {
